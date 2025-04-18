@@ -1,0 +1,271 @@
+# Proyecto de Clustering: Segmentación de Clientes de Centro Comercial
+# Autor: [Tu Nombre]
+# Fecha: 18 de abril de 2025
+
+# Carga de librerías necesarias
+library(ggplot2)      # Para visualizaciones
+library(cluster)      # Para análisis de clustering y métrica de silueta
+library(factoextra)   # Para visualización de clusters
+library(dplyr)        # Para manipulación de datos
+
+# 1. Carga del dataset
+# Establecer el directorio de trabajo si es necesario
+# setwd("ruta_a_tu_directorio")
+
+# Cargar el dataset
+customers <- read.csv("Mall_Customers.csv")
+
+# Examinar las primeras filas
+head(customers)
+
+# 2. Exploración y limpieza de datos
+# Dimensiones del dataset
+dim(customers)
+
+# Estructura de los datos
+str(customers)
+
+# Resumen estadístico
+summary(customers)
+
+# Renombrar columnas para facilitar su manejo
+colnames(customers) <- c("CustomerID", "Gender", "Age", "AnnualIncome", "SpendingScore")
+head(customers)
+
+# Codificar Gender como variable numérica (1 para masculino, 0 para femenino)
+customers$GenderCode <- ifelse(customers$Gender == "Male", 1, 0)
+
+# Normalizar las variables numéricas clave
+customers$AnnualIncome_scaled <- scale(customers$AnnualIncome)
+customers$SpendingScore_scaled <- scale(customers$SpendingScore)
+customers$Age_scaled <- scale(customers$Age)
+
+# 3. Exploración de variables
+# Histograma de la edad
+ggplot(customers, aes(x = Age)) +
+  geom_histogram(binwidth = 5, fill = "blue", alpha = 0.7) +
+  labs(title = "Distribución de Edad", x = "Edad", y = "Frecuencia")
+
+# Histograma del ingreso anual
+ggplot(customers, aes(x = AnnualIncome)) +
+  geom_histogram(binwidth = 10, fill = "green", alpha = 0.7) +
+  labs(title = "Distribución de Ingreso Anual", x = "Ingreso Anual (k$)", y = "Frecuencia")
+
+# Histograma de la puntuación de gasto
+ggplot(customers, aes(x = SpendingScore)) +
+  geom_histogram(binwidth = 5, fill = "red", alpha = 0.7) +
+  labs(title = "Distribución de Puntuación de Gasto", x = "Puntuación de Gasto (1-100)", y = "Frecuencia")
+
+# Distribución por género
+ggplot(customers, aes(x = Gender, fill = Gender)) +
+  geom_bar() +
+  labs(title = "Distribución por Género", x = "Género", y = "Cantidad")
+
+# Diagrama de dispersión de Ingreso vs Puntuación de Gasto
+ggplot(customers, aes(x = AnnualIncome, y = SpendingScore, color = Gender)) +
+  geom_point(alpha = 0.7) +
+  labs(title = "Ingreso Anual vs Puntuación de Gasto", x = "Ingreso Anual (k$)", y = "Puntuación de Gasto")
+
+# 4. Preparación para clustering
+# Seleccionar variables relevantes y escalarlas para clustering
+cluster_data <- customers[, c("AnnualIncome_scaled", "SpendingScore_scaled")]
+
+# 5. Entrenamiento del modelo K-Means
+# Utilizamos el método del codo para determinar el número óptimo de clusters
+set.seed(123) # Para reproducibilidad
+
+# Calculamos la suma de cuadrados interna para diferentes números de clusters
+wcss <- vector()
+for (i in 1:10) {
+  kmeans_model <- kmeans(cluster_data, centers = i, nstart = 25)
+  wcss[i] <- kmeans_model$tot.withinss
+}
+
+# Gráfico del método del codo
+elbow_df <- data.frame(Clusters = 1:10, WCSS = wcss)
+ggplot(elbow_df, aes(x = Clusters, y = WCSS)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Método del Codo para Determinar Número Óptimo de Clusters",
+       x = "Número de Clusters", y = "Suma de Cuadrados Interna")
+
+# Basado en el método del codo, seleccionamos 5 clusters (ajustar según el gráfico)
+k_optimal <- 5
+set.seed(123)
+kmeans_model <- kmeans(cluster_data, centers = k_optimal, nstart = 25)
+
+# Asignar los clusters a los datos originales
+customers$KMeans_Cluster <- as.factor(kmeans_model$cluster)
+
+# 6. Clustering Jerárquico
+# Calcular matriz de distancias
+dist_matrix <- dist(cluster_data, method = "euclidean")
+
+# Aplicar clustering jerárquico con método ward.D
+hc_model <- hclust(dist_matrix, method = "ward.D")
+
+# Visualizar el dendrograma
+plot(hc_model, main = "Dendrograma - Clustering Jerárquico", xlab = "", sub = "", cex = 0.6)
+# Agregar un rectángulo alrededor de los clusters
+rect.hclust(hc_model, k = k_optimal, border = "red")
+
+# Cortar el dendrograma para obtener k_optimal clusters
+hc_clusters <- cutree(hc_model, k = k_optimal)
+
+# Asignar los clusters a los datos originales
+customers$HC_Cluster <- as.factor(hc_clusters)
+
+# 7. Evaluación de modelos mediante la métrica de silueta
+# Calcular silueta para K-Means
+sil_kmeans <- silhouette(kmeans_model$cluster, dist_matrix)
+avg_sil_width_kmeans <- mean(sil_kmeans[, 3])
+cat("Promedio de silueta para K-Means:", avg_sil_width_kmeans, "\n")
+
+# Visualizar silueta para K-Means
+plot(sil_kmeans, main = "Silueta - K-Means", col = 1:k_optimal)
+
+# Calcular silueta para Clustering Jerárquico
+sil_hc <- silhouette(hc_clusters, dist_matrix)
+avg_sil_width_hc <- mean(sil_hc[, 3])
+cat("Promedio de silueta para Clustering Jerárquico:", avg_sil_width_hc, "\n")
+
+# Visualizar silueta para Clustering Jerárquico
+plot(sil_hc, main = "Silueta - Clustering Jerárquico", col = 1:k_optimal)
+
+# Determinar el mejor modelo basado en silueta
+best_model <- ifelse(avg_sil_width_kmeans > avg_sil_width_hc, "K-Means", "Jerárquico")
+cat("El mejor modelo según la métrica de silueta es:", best_model, "\n")
+
+# 8. Análisis descriptivo de segmentos
+# Para K-Means (suponiendo que es el mejor modelo, ajustar si no lo es)
+cluster_stats_kmeans <- customers %>%
+  group_by(KMeans_Cluster) %>%
+  summarise(
+    Conteo = n(),
+    Porcentaje = n() / nrow(customers) * 100,
+    Edad_Media = mean(Age),
+    Ingreso_Medio = mean(AnnualIncome),
+    Puntaje_Gasto_Medio = mean(SpendingScore),
+    Proporcion_Hombres = mean(GenderCode) * 100
+  )
+
+print(cluster_stats_kmeans)
+
+# Para Clustering Jerárquico
+cluster_stats_hc <- customers %>%
+  group_by(HC_Cluster) %>%
+  summarise(
+    Conteo = n(),
+    Porcentaje = n() / nrow(customers) * 100,
+    Edad_Media = mean(Age),
+    Ingreso_Medio = mean(AnnualIncome),
+    Puntaje_Gasto_Medio = mean(SpendingScore),
+    Proporcion_Hombres = mean(GenderCode) * 100
+  )
+
+print(cluster_stats_hc)
+
+# 9. Visualización de clusters
+# Visualización para K-Means
+ggplot(customers, aes(x = AnnualIncome, y = SpendingScore, color = KMeans_Cluster)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Segmentación de Clientes con K-Means",
+       x = "Ingreso Anual (k$)", y = "Puntuación de Gasto",
+       color = "Cluster") +
+  theme_minimal()
+
+# Visualización mejorada con fviz_cluster para K-Means
+fviz_cluster(kmeans_model, data = cluster_data,
+             geom = "point", ellipse.type = "convex",
+             palette = "jco", ggtheme = theme_minimal(),
+             main = "Segmentación con K-Means")
+
+# Visualización para Clustering Jerárquico
+ggplot(customers, aes(x = AnnualIncome, y = SpendingScore, color = HC_Cluster)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Segmentación de Clientes con Clustering Jerárquico",
+       x = "Ingreso Anual (k$)", y = "Puntuación de Gasto",
+       color = "Cluster") +
+  theme_minimal()
+
+# 10. Interpretación básica de los perfiles de cada cluster
+# (Basado en el mejor modelo según métrica de silueta)
+
+# Si el mejor modelo es K-Means
+if (best_model == "K-Means") {
+  cat("\nInterpretación de los perfiles de clusters (K-Means):\n")
+  
+  for (i in 1:k_optimal) {
+    profile <- cluster_stats_kmeans[cluster_stats_kmeans$KMeans_Cluster == i, ]
+    cat(paste0("\nCluster ", i, ":"))
+    cat(paste0("\n- Tamaño: ", round(profile$Conteo, 2), " clientes (", round(profile$Porcentaje, 2), "%)"))
+    cat(paste0("\n- Edad media: ", round(profile$Edad_Media, 2), " años"))
+    cat(paste0("\n- Ingreso medio: ", round(profile$Ingreso_Medio, 2), " k$"))
+    cat(paste0("\n- Puntuación de gasto media: ", round(profile$Puntaje_Gasto_Medio, 2), "/100"))
+    cat(paste0("\n- Proporción de hombres: ", round(profile$Proporcion_Hombres, 2), "%\n"))
+    
+    # Interpretación personalizada según características
+    if (profile$Ingreso_Medio > 75 && profile$Puntaje_Gasto_Medio > 75) {
+      cat("  👉 Clientes con alto ingreso y alto gasto (clientes premium)\n")
+    } else if (profile$Ingreso_Medio > 75 && profile$Puntaje_Gasto_Medio < 50) {
+      cat("  👉 Clientes con alto ingreso pero bajo gasto (potencial desaprovechado)\n")
+    } else if (profile$Ingreso_Medio < 50 && profile$Puntaje_Gasto_Medio > 75) {
+      cat("  👉 Clientes con bajo ingreso pero alto gasto (compradores entusiastas)\n")
+    } else if (profile$Ingreso_Medio < 50 && profile$Puntaje_Gasto_Medio < 50) {
+      cat("  👉 Clientes con bajo ingreso y bajo gasto (compradores conscientes)\n")
+    } else {
+      cat("  👉 Clientes con valores medios (clientes moderados)\n")
+    }
+  }
+} else {
+  # Si el mejor modelo es Jerárquico
+  cat("\nInterpretación de los perfiles de clusters (Jerárquico):\n")
+  
+  for (i in 1:k_optimal) {
+    profile <- cluster_stats_hc[cluster_stats_hc$HC_Cluster == i, ]
+    cat(paste0("\nCluster ", i, ":"))
+    cat(paste0("\n- Tamaño: ", round(profile$Conteo, 2), " clientes (", round(profile$Porcentaje, 2), "%)"))
+    cat(paste0("\n- Edad media: ", round(profile$Edad_Media, 2), " años"))
+    cat(paste0("\n- Ingreso medio: ", round(profile$Ingreso_Medio, 2), " k$"))
+    cat(paste0("\n- Puntuación de gasto media: ", round(profile$Puntaje_Gasto_Medio, 2), "/100"))
+    cat(paste0("\n- Proporción de hombres: ", round(profile$Proporcion_Hombres, 2), "%\n"))
+    
+    # Interpretación personalizada según características
+    if (profile$Ingreso_Medio > 75 && profile$Puntaje_Gasto_Medio > 75) {
+      cat("  👉 Clientes con alto ingreso y alto gasto (clientes premium)\n")
+    } else if (profile$Ingreso_Medio > 75 && profile$Puntaje_Gasto_Medio < 50) {
+      cat("  👉 Clientes con alto ingreso pero bajo gasto (potencial desaprovechado)\n")
+    } else if (profile$Ingreso_Medio < 50 && profile$Puntaje_Gasto_Medio > 75) {
+      cat("  👉 Clientes con bajo ingreso pero alto gasto (compradores entusiastas)\n")
+    } else if (profile$Ingreso_Medio < 50 && profile$Puntaje_Gasto_Medio < 50) {
+      cat("  👉 Clientes con bajo ingreso y bajo gasto (compradores conscientes)\n")
+    } else {
+      cat("  👉 Clientes con valores medios (clientes moderados)\n")
+    }
+  }
+}
+
+# 11. Comparación de coincidencia entre los dos métodos de clustering
+comparison_table <- table(customers$KMeans_Cluster, customers$HC_Cluster)
+print("Tabla de contingencia de asignación de clusters entre K-Means y Jerárquico:")
+print(comparison_table)
+
+# Calcular el porcentaje de coincidencia
+coincidencias <- sum(diag(comparison_table))
+total_observaciones <- sum(comparison_table)
+porcentaje_coincidencia <- coincidencias / total_observaciones * 100
+cat("Porcentaje de coincidencia entre los dos métodos:", round(porcentaje_coincidencia, 2), "%\n")
+
+# 12. Exportar los resultados (opcional)
+# Guardar el dataset con las asignaciones de clusters
+write.csv(customers, "mall_customers_clustered.csv", row.names = FALSE)
+
+# Conclusión
+cat("\n=== CONCLUSIÓN DEL ANÁLISIS ===\n")
+cat("Se han aplicado dos técnicas de clustering (K-Means y Jerárquico) al dataset de clientes del centro comercial.\n")
+cat("El número óptimo de clusters determinado por el método del codo es:", k_optimal, "\n")
+cat("El modelo con mejor rendimiento según la métrica de silueta es:", best_model, 
+    "con un valor promedio de silueta de:", 
+    ifelse(best_model == "K-Means", round(avg_sil_width_kmeans, 4), round(avg_sil_width_hc, 4)), "\n")
+cat("Los resultados permiten identificar segmentos de clientes con diferentes perfiles de comportamiento de compra.\n")
+cat("Estos segmentos pueden utilizarse para estrategias de marketing personalizadas y optimización de la experiencia del cliente.\n")
